@@ -1,0 +1,16 @@
+
+python training/train_torch.py apartment_1 --episodes 500 --episode-time-sec 90 --plot-every 5 --save-every 5
+
+python training/train_torch.py apartment_1 --episodes 500 --episode-time-sec 10 --plot-every 5 --save-every 5
+
+python training/train_torch.py apartment_1 --episodes 500 --episode-time-sec 90 --gru --workers 0 --plot-every 5 --save-every 5
+
+python training/train_torch.py apartment_1 --episodes 500 --episode-time-sec 90 --gru --workers 0 --plot-every 20 --save-every 20
+
+python training/train_torch.py apartment_1 --episodes 5000 --episode-time-sec 90 --gru --workers 8 --plot-every 8 --save-every 100
+
+python training/train_torch.py apartment_1 --episodes 5000 --episode-time-sec 220 --gru --workers 8 --plot-every 8 --save-every 100 --curriculum
+
+python training/train_torch.py random --episodes 5000 --episode-time-sec 220 --gru --workers 8 --plot-every 8 --save-every 100 --curriculum
+
+

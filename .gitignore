@@ -1,0 +1,35 @@
+# venv
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# env
+.env
+.env.local
+
+# Training outputs (сохраняем .gitkeep для пустых папок)
+training/checkpoints/*
+!training/checkpoints/.gitkeep
+training/plots/*
+!training/plots/.gitkeep
