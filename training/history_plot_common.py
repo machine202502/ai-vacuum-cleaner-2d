@@ -56,7 +56,7 @@ def _window_for_n(n: int, cap: int) -> int:
 def load_history(path: Path) -> dict:
     data = torch.load(path, map_location="cpu", weights_only=False)
     rewards = [float(x) for x in data.get("rewards", [])]
-    visited = [float(x) for x in data.get("visited_pct", [])]
+    visited = [float(x) for x in data.get("visited_cells", [])]
     losses = [float(x) for x in data.get("losses", [])]
     vloss = [float(x) for x in data.get("value_losses", [])]
     ap = data.get("action_pct")
@@ -64,7 +64,7 @@ def load_history(path: Path) -> dict:
         ap = list(ap)
     return {
         "rewards": rewards,
-        "visited_pct": visited,
+        "visited": visited,
         "losses": losses,
         "value_losses": vloss,
         "action_pct": ap,
@@ -102,8 +102,10 @@ def draw_training_curves(
     ax_reward.grid(True, alpha=0.3)
 
     ax_visit.plot(episode_x, v, alpha=0.3, color="C1")
-    ax_visit.plot(episode_x, smooth(v, smooth_window), color="C1", label="посещено % (среднее)")
-    ax_visit.set_ylabel("Посещено %")
+    ax_visit.plot(
+        episode_x, smooth(v, smooth_window), color="C1", label="ячейки (скольз. среднее)"
+    )
+    ax_visit.set_ylabel("Ячеек (≥1 посещ.)")
     ax_visit.legend(loc="upper right", fontsize=8)
     ax_visit.grid(True, alpha=0.3)
 

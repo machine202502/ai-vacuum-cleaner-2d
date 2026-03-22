@@ -195,13 +195,13 @@ def _save_training_plot(
     plot_dir: Path,
     step: int,
     rewards: list[float],
-    visited_pct: list[float],
+    visited_cells: list[float],
     losses: list[float],
     value_losses: list[float],
     action_pct: list[tuple[float, ...]] | None = None,
     window: int = 50,
 ) -> None:
-    """6 панелей: reward, посещено%, policy loss, value loss, доли действий, энтропия."""
+    """6 панелей: reward, число посещённых ячеек (и сглаживание), policy/value loss, доли, энтропия."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -256,8 +256,8 @@ def _save_training_plot(
         ax_reward.grid(True, alpha=0.3)
 
         ax_visit.plot(episode_x, v, alpha=0.3, color="C1")
-        ax_visit.plot(episode_x, smooth(v, window), color="C1", label="посещено % (среднее)")
-        ax_visit.set_ylabel("Посещено %")
+        ax_visit.plot(episode_x, smooth(v, window), color="C1", label="ячейки (скольз. среднее)")
+        ax_visit.set_ylabel("Ячеек (≥1 посещ.)")
         ax_visit.legend(loc="upper right", fontsize=8)
         ax_visit.grid(True, alpha=0.3)
 
@@ -321,7 +321,7 @@ def _save_training_plot(
     _draw_figure(
         x_full,
         rewards,
-        visited_pct,
+        visited_cells,
         losses,
         value_losses,
         action_pct,
@@ -343,7 +343,7 @@ def _save_training_plot(
         _draw_figure(
             x_tail,
             rewards[start:],
-            visited_pct[start:],
+            visited_cells[start:],
             losses[start:],
             value_losses[start:],
             action_pct[start:] if action_pct else None,
@@ -394,13 +394,13 @@ def train_ppo(
 
     if initial_history:
         history_rewards:      list[float]             = list(initial_history.get("rewards", []))
-        history_visited_pct:  list[float]             = list(initial_history.get("visited_pct", []))
+        history_visited_cells: list[float] = list(initial_history.get("visited_cells", []))
         history_losses:       list[float]             = list(initial_history.get("losses", []))
         history_value_losses: list[float]             = list(initial_history.get("value_losses", []))
         history_action_pct:   list[tuple[float, ...]] = list(initial_history.get("action_pct", []))
     else:
         history_rewards      = []
-        history_visited_pct  = []
+        history_visited_cells  = []
         history_losses       = []
         history_value_losses = []
         history_action_pct   = []
@@ -663,6 +663,7 @@ def train_ppo(
                 visited      = ep_info.get("visited", 0)
                 total_cells  = ep_info.get("total_cells", 0)
                 pct          = 100.0 * visited / total_cells if total_cells else 0.0
+                visited_f    = float(visited)
                 Tp           = len(t_act)
                 n_act = env.action_space_n
                 action_pct_ep = tuple(
@@ -670,7 +671,7 @@ def train_ppo(
                 ) if Tp > 0 else tuple(0.0 for _ in range(n_act))
 
                 history_rewards.append(total_reward)
-                history_visited_pct.append(pct)
+                history_visited_cells.append(visited_f)
                 history_losses.append(mean_ploss)
                 history_value_losses.append(mean_vloss)
                 history_action_pct.append(action_pct_ep)
@@ -691,7 +692,7 @@ def train_ppo(
                         out_dir,
                         step=ep_done,
                         rewards=history_rewards,
-                        visited_pct=history_visited_pct,
+                        visited_cells=history_visited_cells,
                         losses=history_losses,
                         value_losses=history_value_losses,
                         action_pct=history_action_pct,
@@ -702,7 +703,7 @@ def train_ppo(
                     _save_checkpoint(
                         ckpt_dir, policy, optimizer, scheduler,
                         ep_done, model_config,
-                        history_rewards, history_visited_pct,
+                        history_rewards, history_visited_cells,
                         history_losses, history_value_losses, history_action_pct,
                         max_steps=current_max_steps,
                     )
@@ -718,7 +719,7 @@ def train_ppo(
         _save_checkpoint(
             ckpt_dir, policy, optimizer, scheduler,
             episodes, model_config,
-            history_rewards, history_visited_pct,
+            history_rewards, history_visited_cells,
             history_losses, history_value_losses, history_action_pct,
             final=True,
             max_steps=current_max_steps,
@@ -727,7 +728,7 @@ def train_ppo(
             out_dir,
             step=episodes,
             rewards=history_rewards,
-            visited_pct=history_visited_pct,
+            visited_cells=history_visited_cells,
             losses=history_losses,
             value_losses=history_value_losses,
             action_pct=history_action_pct,
@@ -743,7 +744,7 @@ def _save_checkpoint(
     episode: int,
     model_config: dict,
     rewards: list,
-    visited_pct: list,
+    visited_cells: list,
     losses: list,
     value_losses: list,
     action_pct: list,
@@ -760,7 +761,7 @@ def _save_checkpoint(
     }
     hist_data = {
         "rewards":      rewards,
-        "visited_pct":  visited_pct,
+        "visited_cells": visited_cells,
         "losses":       losses,
         "value_losses": value_losses,
         "action_pct":   action_pct,

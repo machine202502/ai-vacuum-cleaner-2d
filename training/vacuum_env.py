@@ -3,7 +3,8 @@
 Без pygame/окна; использует те же комнаты, контроллер и карту посещений.
 
 obs (6 значений):
-  [ir_forward_norm, ir_p30_norm, ir_m30_norm, sin_angle, cos_angle, encoder_norm]
+  [ir_forward_norm, ir_p30_norm, ir_m30_norm, sin_angle, cos_angle, encoder_delta_norm]
+  encoder_delta_norm — расстояние за последний шаг / max за шаг (0 = стоим у стены).
 """
 from __future__ import annotations
 
@@ -185,13 +186,12 @@ class VacuumEnv:
       1: назад           5: вперёд + вправо
       2: влево           6: назад + влево
       3: вправо          7: назад + вправо
-    obs (8 значений):
-      [ir_fwd, ir_p30, ir_m30, sin_angle, cos_angle, encoder_total, encoder_delta, time]
-      encoder_delta — расстояние за последний шаг (0 = стоим у стены).
-      time          — позиция в эпизоде [0, 1].
+    obs (6 значений):
+      [ir_fwd, ir_p30, ir_m30, sin_angle, cos_angle, encoder_delta]
+      encoder_delta — расстояние за последний шаг (норм.), 0 = стоим у стены.
     """
 
-    OBS_DIM = 8  # 3 IR + sin/cos угла + encoder_total + encoder_delta + time
+    OBS_DIM = 6  # 3 IR + sin/cos угла + encoder_delta
 
     def __init__(
         self,
@@ -209,8 +209,6 @@ class VacuumEnv:
         self._config = AgentConfig()
         self._body_radius_px = meters_to_pixels(self._config.radius)
 
-        # Encoder total: нормализуем по теоретическому максимуму дистанции за эпизод
-        self._encoder_norm_scale = max(1.0, max_steps * (self._config.speed / fps))
         # Encoder delta: нормализуем по максимуму за один шаг (скорость вперёд / fps)
         self._max_step_dist = max(1e-9, self._config.speed / fps)
 
@@ -288,11 +286,8 @@ class VacuumEnv:
         angle_rad = math.radians(self._agent.angle)
         sin_a = math.sin(angle_rad)
         cos_a = math.cos(angle_rad)
-        encoder = min(self._encoder_total / self._encoder_norm_scale, 1.0)
         enc_delta = min(self._encoder_delta / self._max_step_dist, 1.0)
-        # Время: 1.0 означает 24 часа (24 * 60 * 60 секунд)
-        time_norm = min(self._step_count / (24 * 60 * 60 * self._fps), 1.0)
-        return [ir_fwd, ir_p30, ir_m30, sin_a, cos_a, encoder, enc_delta, time_norm]
+        return [ir_fwd, ir_p30, ir_m30, sin_a, cos_a, enc_delta]
 
     def step(self, action: int) -> tuple[list[float], float, bool, dict[str, Any]]:
         """
@@ -365,7 +360,6 @@ class VacuumEnv:
     def set_max_steps(self, max_steps: int) -> None:
         """Обновить длину эпизода — для curriculum learning."""
         self._max_steps = max_steps
-        self._encoder_norm_scale = max(1.0, max_steps * (self._config.speed / self._fps))
 
     @property
     def action_space_n(self) -> int:

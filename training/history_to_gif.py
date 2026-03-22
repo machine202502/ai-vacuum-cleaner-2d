@@ -1,6 +1,6 @@
 """
 Анимация обучения из checkpoints/training_history.pt → last.gif и delta-last.gif
-(те же 6 панелей, что и в train_torch._save_training_plot, нарастающая история).
+(те же 6 панелей, что и train_torch._save_training_plot; посещения — ячейки, не %).
 
 Запуск из корня проекта:
   python training/history_to_gif.py
@@ -82,7 +82,7 @@ def render_gif_last(
                 axes,
                 x,
                 rewards[:e],
-                hist["visited_pct"][:e],
+                hist["visited"][:e],
                 hist["losses"][:e],
                 hist["value_losses"][:e],
                 ap_all,
@@ -138,7 +138,7 @@ def render_gif_delta(
                 axes,
                 x,
                 rewards[start:e],
-                hist["visited_pct"][start:e],
+                hist["visited"][start:e],
                 hist["losses"][start:e],
                 hist["value_losses"][start:e],
                 ap_seg,

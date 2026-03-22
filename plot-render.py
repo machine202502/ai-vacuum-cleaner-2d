@@ -395,7 +395,7 @@ class PlotRenderApp:
             self.ep_var.set(X)
 
         rewards = self.hist["rewards"]
-        visited = self.hist["visited_pct"]
+        visited = self.hist["visited"]
         losses = self.hist["losses"]
         vloss = self.hist["value_losses"]
         ap = self.hist.get("action_pct")

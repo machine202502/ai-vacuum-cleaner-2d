@@ -2,7 +2,9 @@
 Управление пылесосом обученной моделью (policy_final.pt).
 То же, что game.py: комната, камера, карта посещений, ИК, encoder. Управление — по модели.
 Поддерживает MLP и GRU-политику — конфиг читается автоматически из чекпоинта.
-Чекбокс «Скрыть стены, зоны, робота (только ИК)» — остаются лучи дальномеров на тёмном фоне.
+Кнопка «Скрыть стены, зоны, робота (только ИК)» — остаются лучи дальномеров на тёмном фоне.
+Абляция: кнопки «обнулить канал» (текст на кнопке; UICheckBox в pygame_gui рисует подпись справа за rect).
+Действие: сетка 3×3 со стрелками; зелёный — argmax, остальные серые.
 """
 from __future__ import annotations
 
@@ -26,14 +28,42 @@ from visit_map import VisitMap
 import visit_map_render
 from training.policy_net import PolicyNet
 
+
+def _install_pygame_gui_translate_fallback() -> None:
+    """pygame_gui вызывает i18n.t() из копий translate (from ... import translate).
+    Патчим utility и каждый модуль, где имя translate привязано при импорте."""
+    import pygame_gui.core.utility as pgu_util
+    from pygame_gui.elements import ui_button, ui_label, ui_text_box, ui_text_entry_line
+    from pygame_gui.windows import ui_file_dialog
+
+    _real = pgu_util.translate
+
+    def _translate_safe(text_to_translate: str, **keywords) -> str:
+        if text_to_translate is None:
+            return ""
+        try:
+            out = _real(text_to_translate, **keywords)
+            return text_to_translate if out is None else out
+        except Exception:
+            return text_to_translate
+
+    safe = _translate_safe
+    pgu_util.translate = safe  # type: ignore[assignment, misc]
+    ui_label.translate = safe  # type: ignore[misc]
+    ui_text_box.translate = safe  # type: ignore[misc]
+    ui_button.translate = safe  # type: ignore[misc]
+    ui_text_entry_line.translate = safe  # type: ignore[misc]
+    ui_file_dialog.translate = safe  # type: ignore[misc]
+
+
 WORLD_SIZE = 16000
 WORLD_ORIGIN = WORLD_SIZE // 2
 SCALE = meters_to_pixels(1.0)
 FPS = 60
-INITIAL_W = 1000
-INITIAL_H = 700
+INITIAL_W = 1040
+INITIAL_H = 720
 
-PANEL_W = 260
+PANEL_W = 300
 PANEL_BG = (38, 38, 44)
 BG = (28, 28, 32)
 TEXT_CLR = (200, 200, 208)
@@ -48,12 +78,6 @@ VISIT_PCT_UPDATE_MS = 1000
 
 # Нормализация obs — должна совпадать с vacuum_env.py
 IR_MAX_M = 3.0
-# Encoder total: теоретический максимум за 90-секундный эпизод (= 27 м).
-ENCODER_NORM_SCALE = 90 * 0.3  # 90 сек × 0.3 м/с = 27.0 м
-# Encoder delta: максимум за один шаг (forward speed / fps).
-MAX_STEP_DIST = 0.3 / FPS       # 0.005 м
-# Количество шагов в эпизоде (для нормализации time = step/max_steps).
-MAX_STEPS_VIS = 90 * FPS        # 5400
 
 ACTION_NAMES = (
     "forward", "backward", "turn_left", "turn_right",
@@ -76,6 +100,117 @@ _ACTION_FLAGS: list[tuple[bool, bool, bool, bool]] = [
 ]
 
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parent / "training" / "checkpoints" / "last.pt"
+
+
+def _toggle_selectable_button(btn: pygame_gui.elements.UIButton) -> None:
+    """Переключатель на основе UIButton (текст по центру кнопки)."""
+    if btn.is_selected:
+        btn.unselect()
+    else:
+        btn.select()
+
+
+def _obs_net_display_line(obs: list[float]) -> str:
+    """Одна строка, без стрелок и спецсимволов (шрифт темы pygame_gui)."""
+    if len(obs) < 6:
+        return "val: " + " ".join(f"{v:.2f}" for v in obs)
+    return (
+        f"val: {obs[0]:.2f} {obs[1]:.2f} {obs[2]:.2f} | "
+        f"sn {obs[3]:.2f} cs {obs[4]:.2f} | dl {obs[5]:.2f}"
+    )
+
+
+# 3x3: углы = диагонали, стороны = вперёд/назад/влево/вправо, центр = нейтрально
+_PAD_CELL_ACTION: tuple[tuple[int | None, ...], ...] = (
+    (4, 0, 5),
+    (2, None, 3),
+    (6, 1, 7),
+)
+# Индекс действия -> угол стрелки (радианы), кончик смотрит «наружу» от центра поля
+_ACTION_ARROW_RAD = (
+    -math.pi / 2,  # 0 вперёд
+    math.pi / 2,  # 1 назад
+    math.pi,  # 2 влево
+    0.0,  # 3 вправо
+    -3 * math.pi / 4,  # 4 вперёд+влево
+    -math.pi / 4,  # 5 вперёд+вправо
+    3 * math.pi / 4,  # 6 назад+влево
+    math.pi / 4,  # 7 назад+вправо
+)
+
+_PAD_BG = (42, 42, 48)
+_PAD_BORDER = (68, 68, 76)
+_PAD_CELL_LINE = (58, 58, 66)
+_PAD_OFF = (100, 100, 108)
+_PAD_ON = (60, 210, 95)
+_PAD_CENTER_DOT = (72, 72, 80)
+
+
+def _draw_arrow_head(
+    surf: pygame.Surface,
+    cx: float,
+    cy: float,
+    angle_rad: float,
+    length: float,
+    width: float,
+    color: tuple[int, int, int],
+) -> None:
+    """Треугольник: кончик в направлении angle_rad."""
+    tip_x = cx + math.cos(angle_rad) * length
+    tip_y = cy + math.sin(angle_rad) * length
+    back_x = cx - math.cos(angle_rad) * (length * 0.35)
+    back_y = cy - math.sin(angle_rad) * (length * 0.35)
+    perp = angle_rad + math.pi / 2
+    hw = width * 0.5
+    p1 = (int(back_x + math.cos(perp) * hw), int(back_y + math.sin(perp) * hw))
+    p2 = (int(back_x - math.cos(perp) * hw), int(back_y - math.sin(perp) * hw))
+    pygame.draw.polygon(surf, color, [(int(tip_x), int(tip_y)), p1, p2])
+
+
+def _draw_action_pad_3x3(
+    surf: pygame.Surface,
+    rect: pygame.Rect,
+    action: int,
+    n_act: int,
+    caption: str,
+) -> None:
+    """Рисует сетку 3x3 со стрелками; argmax — зелёный, остальные — серые."""
+    caption_h = 22
+    inner = pygame.Rect(rect.x + 3, rect.y + 2, rect.w - 6, rect.h - 4 - caption_h)
+    pygame.draw.rect(surf, _PAD_BG, inner, border_radius=6)
+    pygame.draw.rect(surf, _PAD_BORDER, inner, width=1, border_radius=6)
+
+    cw = inner.w // 3
+    ch = inner.h // 3
+    ac = min(max(action, 0), max(0, n_act - 1))
+
+    for row in range(3):
+        for col in range(3):
+            aid = _PAD_CELL_ACTION[row][col]
+            cell = pygame.Rect(inner.x + col * cw, inner.y + row * ch, cw, ch)
+            pygame.draw.rect(surf, _PAD_CELL_LINE, cell, width=1)
+
+            if aid is None:
+                cc = cell.center
+                pygame.draw.circle(surf, _PAD_CENTER_DOT, cc, max(2, min(cw, ch) // 10))
+                continue
+            if aid >= n_act:
+                continue
+
+            cx = float(cell.centerx)
+            cy = float(cell.centery)
+            L = min(cw, ch) * 0.38
+            W = min(cw, ch) * 0.42
+            col_arrow = _PAD_ON if aid == ac else _PAD_OFF
+            _draw_arrow_head(surf, cx, cy, _ACTION_ARROW_RAD[aid], L, W, col_arrow)
+
+    try:
+        font = pygame.font.SysFont("segoe ui", 15)
+    except Exception:
+        font = pygame.font.Font(None, 18)
+    line = f"#{action}  {caption}" if caption else f"#{action}"
+    txt = font.render(line, True, (210, 210, 218))
+    surf.blit(txt, (inner.x + 2, inner.bottom + 3))
 
 
 def _room_data_from_room(room, scale: float) -> dict:
@@ -167,7 +302,13 @@ def _random_agent_position_in_free_space(room, visit_map: VisitMap, body_radius_
     return (room.agent.x, room.agent.y)
 
 
-def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
+def _create_ui(
+    manager: pygame_gui.UIManager,
+    vw: int,
+    vh: int,
+    *,
+    zero_delta_ablate: bool = False,
+) -> dict:
     bw = PANEL_W - 2 * BTN_MARGIN
     x, y = BTN_MARGIN, BTN_MARGIN
 
@@ -175,8 +316,10 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
     h_line = 20
     h_room = 24
     h_drop = 32
-    h_chk  = 26
-    h_hint = 68
+    h_toggle = 36  # как у «Загрузить»: текст внутри кнопки (не UICheckBox — у него подпись справа за rect)
+    h_hint = 88
+    h_obs  = 26
+    h_pad  = 118
 
     btn_load = pygame_gui.elements.UIButton(
         relative_rect=pygame.Rect(x, y, bw, h_btn),
@@ -207,61 +350,81 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
     )
     y += h_drop + UI_GAP
 
+    label_ablate_title = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect(x, y, bw, h_line + 6),
+        text="Обнулить канал (0 на вход сети):",
+        manager=manager,
+    )
+    y += h_line + 6 + UI_GAP
 
-    label_in_fwd = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[ir_fwd] — —",    manager=manager)
-    y += h_line + UI_GAP
-    label_in_p30 = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[ir_p30] — —",    manager=manager)
-    y += h_line + UI_GAP
-    label_in_m30 = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[ir_m30] — —",    manager=manager)
-    y += h_line + UI_GAP
-    label_in_sin   = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[sin_угол] — —",  manager=manager)
-    y += h_line + UI_GAP
-    label_in_cos   = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[cos_угол] — —",  manager=manager)
-    y += h_line + UI_GAP
-    label_in_enc   = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[enc] — —",        manager=manager)
-    y += h_line + UI_GAP
-    label_in_delta = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[delta] — —",      manager=manager)
-    y += h_line + UI_GAP
-    label_in_time  = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Вход[time] — —",       manager=manager)
-    y += h_line + UI_GAP
-    label_out_fwd      = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[вперёд] — —",       manager=manager)
-    y += h_line + UI_GAP
-    label_out_back     = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[назад] — —",        manager=manager)
-    y += h_line + UI_GAP
-    label_out_left     = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[влево] — —",        manager=manager)
-    y += h_line + UI_GAP
-    label_out_right    = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[вправо] — —",       manager=manager)
-    y += h_line + UI_GAP
-    label_out_fwd_left = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[вп+влево] — —",     manager=manager)
-    y += h_line + UI_GAP
-    label_out_fwd_right= pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[вп+вправо] — —",    manager=manager)
-    y += h_line + UI_GAP
-    label_out_back_left= pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[нз+влево] — —",     manager=manager)
-    y += h_line + UI_GAP
-    label_out_back_right=pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Выход[нз+вправо] — —",    manager=manager)
-    y += h_line + UI_GAP
-    label_action       = pygame_gui.elements.UILabel(relative_rect=pygame.Rect(x, y, bw, h_line), text="Действие: —",              manager=manager)
-    y += h_line + UI_GAP
+    # Один столбец: текст целиком в подписи чекбокса (без стрелок и «красивых» символов)
+    ablate_labels = (
+        "ИК прямо",
+        "ИК +30 град",
+        "ИК -30 град",
+        "синус угла",
+        "косинус угла",
+        "смещение за шаг (delta)",
+    )
+    btn_ablate: list[pygame_gui.elements.UIButton] = []
+    for idx, lbl in enumerate(ablate_labels):
+        b = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect(x, y, bw, h_toggle),
+            text=lbl,
+            manager=manager,
+        )
+        if zero_delta_ablate and idx == 5:
+            b.select()
+        btn_ablate.append(b)
+        y += h_toggle + 4
+    y += UI_GAP
 
-    chk_visit_map = pygame_gui.elements.UICheckBox(
-        relative_rect=pygame.Rect(x, y, bw, h_chk),
+    label_obs_title = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect(x, y, bw, h_line),
+        text="Числа на вход (после обнулений):",
+        manager=manager,
+    )
+    y += h_line + 2
+
+    label_obs_net = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect(x, y, bw, h_obs),
+        text="val: --",
+        manager=manager,
+    )
+    y += h_obs + UI_GAP
+
+    label_act_title = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect(x, y, bw, h_line),
+        text="Действие: зелёная стрелка = argmax",
+        manager=manager,
+    )
+    y += h_line + 2
+
+    label_gamepad = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect(x, y, bw, h_pad),
+        text=" ",
+        manager=manager,
+    )
+    y += h_pad + UI_GAP
+
+    btn_visit_map = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect(x, y, bw, h_toggle),
         text="Карта посещений",
         manager=manager,
-        initial_state=True,
     )
-    y += h_chk + UI_GAP
+    btn_visit_map.select()
+    y += h_toggle + UI_GAP
 
-    chk_hide_room_robot = pygame_gui.elements.UICheckBox(
-        relative_rect=pygame.Rect(x, y, bw, h_chk),
+    btn_hide_room_robot = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect(x, y, bw, h_toggle),
         text="Скрыть стены, зоны, робота (только ИК)",
         manager=manager,
-        initial_state=False,
     )
-    y += h_chk + UI_GAP
+    y += h_toggle + UI_GAP
 
     label_visit_pct = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect(x, y, bw, h_line),
-        text="Посещено: —",
+        text="Посещено: -",
         manager=manager,
     )
     y += h_line + UI_GAP
@@ -275,7 +438,12 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
 
     label_hint = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect(x, y, bw, h_hint),
-        text="Управление: модель\nСКМ/колёсико — камера\nR — рестарт (новая позиция)\n«Только ИК» — скрыть стены/зоны/робота",
+        text=(
+            "Управление: модель\n"
+            "ПКМ и колесо - камера\n"
+            "R - новая позиция\n"
+            "Запуск: --zero-delta только delta=0"
+        ),
         manager=manager,
     )
 
@@ -284,27 +452,16 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
         "label_room":       label_room,
         "label_speed":      label_speed,
         "dropdown_speed":   dropdown_speed,
-        "chk_visit_map":       chk_visit_map,
-        "chk_hide_room_robot": chk_hide_room_robot,
+        "btn_visit_map":       btn_visit_map,
+        "btn_hide_room_robot": btn_hide_room_robot,
+        "btn_ablate":          btn_ablate,
+        "label_ablate_title":  label_ablate_title,
+        "label_obs_title":     label_obs_title,
+        "label_obs_net":       label_obs_net,
+        "label_act_title":     label_act_title,
+        "label_gamepad":       label_gamepad,
         "label_visit_pct":  label_visit_pct,
         "label_encoder":    label_encoder,
-        "label_in_fwd":     label_in_fwd,
-        "label_in_p30":     label_in_p30,
-        "label_in_m30":     label_in_m30,
-        "label_in_sin":     label_in_sin,
-        "label_in_cos":     label_in_cos,
-        "label_in_enc":     label_in_enc,
-        "label_in_delta":   label_in_delta,
-        "label_in_time":    label_in_time,
-        "label_out_fwd":       label_out_fwd,
-        "label_out_back":      label_out_back,
-        "label_out_left":      label_out_left,
-        "label_out_right":     label_out_right,
-        "label_out_fwd_left":  label_out_fwd_left,
-        "label_out_fwd_right": label_out_fwd_right,
-        "label_out_back_left": label_out_back_left,
-        "label_out_back_right":label_out_back_right,
-        "label_action":        label_action,
         "label_hint":       label_hint,
     }
 
@@ -322,7 +479,7 @@ def _load_policy(path: Path) -> tuple["PolicyNet", dict]:
     data = torch.load(path, map_location="cpu", weights_only=False)
     cfg = data.get("config", {})
     policy = PolicyNet(
-        obs_dim=cfg.get("obs_dim", 8),
+        obs_dim=cfg.get("obs_dim", 6),
         n_actions=cfg.get("n_actions", 8),
         hidden_size=cfg.get("hidden_size", 256),
         use_gru=cfg.get("use_gru", True),
@@ -358,12 +515,18 @@ def _resolve_policy_path(explicit: Path) -> Path:
 
 
 def main() -> None:
-    policy_path = Path(sys.argv[1]) if len(sys.argv) > 1 and Path(sys.argv[1]).suffix == ".pt" else DEFAULT_POLICY_PATH
-    room_arg = sys.argv[2] if len(sys.argv) > 2 else (sys.argv[1] if len(sys.argv) > 1 and Path(sys.argv[1]).suffix != ".pt" else None)
+    cli_zero_delta = "--zero-delta" in sys.argv[1:]
+    argv = [a for a in sys.argv[1:] if a != "--zero-delta"]
+    if len(argv) >= 1 and Path(argv[0]).suffix == ".pt":
+        policy_path = Path(argv[0])
+        room_arg = argv[1] if len(argv) >= 2 else None
+    else:
+        policy_path = DEFAULT_POLICY_PATH
+        room_arg = argv[0] if len(argv) >= 1 else None
     policy_path = _resolve_policy_path(policy_path)
     if not policy_path.is_file():
         print(f"Модель не найдена: {policy_path}")
-        print("Запуск: python agent.py [путь/к/policy_final.pt] [комната]")
+        print("Запуск: python agent.py [policy.pt] [комната] [--zero-delta]")
         sys.exit(1)
 
     policy, train_cfg = _load_policy(policy_path)
@@ -385,21 +548,18 @@ def main() -> None:
     agent = Agent(room.agent.x, room.agent.y)
     body_radius_px = meters_to_pixels(config.radius)
 
-    # Нормализация obs — должна совпадать с тем, что было при обучении.
-    # max_steps берём из чекпоинта; если старый чекпоинт без этого поля — fallback на 90 сек.
-    _ckpt_max_steps = train_cfg.get("max_steps", 0)
-    _obs_max_steps = _ckpt_max_steps if _ckpt_max_steps > 0 else int(90 * FPS)
-    _encoder_norm_scale = max(1.0, _obs_max_steps * (config.speed / FPS))
-    _max_steps_vis = _obs_max_steps
-
     pygame.init()
+    _install_pygame_gui_translate_fallback()
     screen = pygame.display.set_mode((INITIAL_W, INITIAL_H), pygame.RESIZABLE)
     pygame.display.set_caption(f"Vacuum (модель) — {room_label}")
     clock = pygame.time.Clock()
     vw, vh = screen.get_size()
     manager = pygame_gui.UIManager((vw, vh))
-    ui = _create_ui(manager, vw, vh)
+    ui = _create_ui(manager, vw, vh, zero_delta_ablate=cli_zero_delta)
     ui["label_room"].set_text(room_label[:30] + "..." if len(room_label) > 30 else room_label)
+    _toggle_button_targets: frozenset = frozenset(
+        (*ui["btn_ablate"], ui["btn_visit_map"], ui["btn_hide_room_robot"])
+    )
 
     world_surface = pygame.Surface((WORLD_SIZE, WORLD_SIZE))
     room_ctx = room_render.RenderContext(surface=world_surface, origin_x=WORLD_ORIGIN, origin_y=WORLD_ORIGIN)
@@ -428,12 +588,14 @@ def main() -> None:
     last_visit_pct_ticks = 0
     encoder_total = 0.0
     encoder_delta = 0.0   # расстояние за последний шаг (0 = стоим)
-    step_count_vis = 0    # счётчик шагов для time = step/max_steps
 
     # Скрытое состояние GRU: сохраняется между шагами, сбрасывается на рестарте
     hidden = policy.init_hidden() if policy.use_gru else None
 
-    def _get_obs() -> list[float]:
+    last_action = 0
+    last_action_name = ""
+
+    def _raw_obs_vector() -> list[float]:
         sens = controller.get_sensors(agent)
         ir_fwd = min(sens.ir_forward       / IR_MAX_M, 1.0)
         ir_p30 = min(sens.ir_forward_p_30  / IR_MAX_M, 1.0)
@@ -441,11 +603,16 @@ def main() -> None:
         angle_rad = math.radians(agent.angle)
         sin_a = math.sin(angle_rad)
         cos_a = math.cos(angle_rad)
-        enc       = min(encoder_total / _encoder_norm_scale, 1.0)
-        enc_delta = min(encoder_delta / MAX_STEP_DIST, 1.0)
-        # Время: 1.0 означает 24 часа (24 * 60 * 60 секунд)
-        time_norm = min(step_count_vis / (24 * 60 * 60 * FPS), 1.0)
-        return [ir_fwd, ir_p30, ir_m30, sin_a, cos_a, enc, enc_delta, time_norm]
+        max_step_dist = max(1e-9, config.speed / FPS)
+        enc_delta_n = min(encoder_delta / max_step_dist, 1.0)
+        return [ir_fwd, ir_p30, ir_m30, sin_a, cos_a, enc_delta_n]
+
+    def _get_obs() -> list[float]:
+        v = _raw_obs_vector()
+        for i, b in enumerate(ui["btn_ablate"]):
+            if b.is_selected:
+                v[i] = 0.0
+        return v
 
     while True:
         time_delta = clock.tick(FPS) / 1000.0
@@ -469,7 +636,6 @@ def main() -> None:
                     agent.angle = random.uniform(0.0, 360.0)
                     encoder_total = 0.0
                     encoder_delta = 0.0
-                    step_count_vis = 0
                     hidden = policy.init_hidden() if policy.use_gru else None
                     _update_free_space_and_visit_map(room, agent, free_space_map, visit_map)
                     visit_total_cells = visit_map.total_cells
@@ -498,7 +664,9 @@ def main() -> None:
 
             manager.process_events(event)
 
-            if event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element == ui["btn_load"]:
+            if event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element in _toggle_button_targets:
+                _toggle_selectable_button(event.ui_element)
+            elif event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element == ui["btn_load"]:
                 try:
                     from tkinter import Tk, filedialog
                     root = Tk()
@@ -521,7 +689,6 @@ def main() -> None:
                         visit_total_cells = visit_map.total_cells
                         encoder_total = 0.0
                         encoder_delta = 0.0
-                        step_count_vis = 0
                         hidden = policy.init_hidden() if policy.use_gru else None
                 except Exception as e:
                     print(f"Ошибка загрузки: {e}")
@@ -548,28 +715,15 @@ def main() -> None:
                 # forward_step сохраняет hidden state для GRU между шагами
                 logits, probs, hidden = policy.forward_step(t, hidden)
             action = torch.argmax(probs, dim=-1).item()
-            action_ru  = ACTION_LABELS[action]
             p = probs.squeeze().tolist()
             # Если модель обучена на 4 действиях — дополняем нулями для отображения
             while len(p) < 8:
                 p.append(0.0)
-            ui["label_in_fwd"].set_text("Вход[ir_fwd] — {:.4f}".format(obs[0]))
-            ui["label_in_p30"].set_text("Вход[ir_p30] — {:.4f}".format(obs[1]))
-            ui["label_in_m30"].set_text("Вход[ir_m30] — {:.4f}".format(obs[2]))
-            ui["label_in_sin"].set_text("Вход[sin_угол] — {:.4f}".format(obs[3]))
-            ui["label_in_cos"].set_text("Вход[cos_угол] — {:.4f}".format(obs[4]))
-            ui["label_in_enc"].set_text("Вход[enc] — {:.4f}".format(obs[5]))
-            ui["label_in_delta"].set_text("Вход[delta] — {:.4f}".format(obs[6] if len(obs) > 6 else 0.0))
-            ui["label_in_time"].set_text("Вход[time] — {:.4f}".format(obs[7] if len(obs) > 7 else 0.0))
-            ui["label_out_fwd"].set_text("Выход[вперёд] — {:.4f}".format(p[0]))
-            ui["label_out_back"].set_text("Выход[назад] — {:.4f}".format(p[1]))
-            ui["label_out_left"].set_text("Выход[влево] — {:.4f}".format(p[2]))
-            ui["label_out_right"].set_text("Выход[вправо] — {:.4f}".format(p[3]))
-            ui["label_out_fwd_left"].set_text("Выход[вп+влево] — {:.4f}".format(p[4]))
-            ui["label_out_fwd_right"].set_text("Выход[вп+вправо] — {:.4f}".format(p[5]))
-            ui["label_out_back_left"].set_text("Выход[нз+влево] — {:.4f}".format(p[6]))
-            ui["label_out_back_right"].set_text("Выход[нз+вправо] — {:.4f}".format(p[7]))
-            ui["label_action"].set_text("Действие: {}".format(action_ru))
+            ui["label_obs_net"].set_text(_obs_net_display_line(obs))
+            last_action = action
+            last_action_name = (
+                ACTION_LABELS[action] if 0 <= action < len(ACTION_LABELS) else "?"
+            )
             prev_x, prev_y, prev_angle = agent.x, agent.y, agent.angle
             fwd, back, left, right = _ACTION_FLAGS[action] if action < len(_ACTION_FLAGS) else (False, False, False, False)
             result = controller.apply_flags(
@@ -579,7 +733,6 @@ def main() -> None:
             )
             encoder_delta = result.encoder
             encoder_total += result.encoder
-            step_count_vis += 1
             if result.encoder > 0:
                 update_visits(
                     agent, prev_x, prev_y, prev_angle,
@@ -587,7 +740,7 @@ def main() -> None:
                 )
 
         world_surface.fill(BG)
-        hide_room_robot = ui["chk_hide_room_robot"].is_checked
+        hide_room_robot = ui["btn_hide_room_robot"].is_selected
         if not hide_room_robot:
             room_render.draw_room(room, room_ctx)
             agent_render.draw_agent(agent, agent_ctx)
@@ -611,9 +764,9 @@ def main() -> None:
             elif visit_map.has_map:
                 ui["label_visit_pct"].set_text("Посещено: 0 / 0 (0%)")
             else:
-                ui["label_visit_pct"].set_text("Посещено: —")
+                ui["label_visit_pct"].set_text("Посещено: -")
 
-        if ui["chk_visit_map"].is_checked and visit_map.has_map:
+        if ui["btn_visit_map"].is_selected and visit_map.has_map:
             draw_data = visit_map.get_draw_data()
             if draw_data:
                 visit_map_render.draw_visit_map(world_surface, draw_data)
@@ -628,6 +781,10 @@ def main() -> None:
             manager.set_window_resolution((vw, vh))
         manager.update(time_delta)
         manager.draw_ui(screen)
+        gp_rect = ui["label_gamepad"].get_abs_rect()
+        _draw_action_pad_3x3(
+            screen, gp_rect, last_action, policy.n_actions, last_action_name
+        )
 
         pygame.display.flip()
 
