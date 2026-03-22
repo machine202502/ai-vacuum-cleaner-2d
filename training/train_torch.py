@@ -49,6 +49,9 @@ GAE_LAMBDA        = 0.95    # λ для GAE
 GRAD_CLIP         = 0.5     # max norm для clip_grad_norm_
 REWARD_SCALE      = 0.01    # Масштабирование наград для стабилизации Value Loss
 
+# Второй график «хвоста» обучения (сохраняется как plots/delta-last.png)
+PLOT_DELTA_LAST_EPISODES = 500
+
 ACTION_LABELS = ("вперёд", "назад", "влево", "вправо", "вп+влево", "вп+вправо", "нз+влево", "нз+вправо")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,84 +212,121 @@ def _save_training_plot(
 
     plot_dir.mkdir(parents=True, exist_ok=True)
     n = len(rewards)
-    x = range(1, n + 1)
+    if n == 0:
+        return
 
     def smooth(y: list[float], w: int) -> list[float]:
-        if w <= 1 or len(y) < w:
-            return y
+        if len(y) == 0:
+            return []
+        if w <= 1:
+            return list(y)
+        w = min(w, len(y))
+        if w <= 1:
+            return list(y)
         out = []
         for i in range(len(y)):
             lo = max(0, i - w + 1)
             out.append(sum(y[lo: i + 1]) / (i - lo + 1))
         return out
 
-    n_rows = 6 if action_pct else 4
-    fig, axes = plt.subplots(n_rows, 1, figsize=(7, 2.2 * n_rows), sharex=True)
-    fig.suptitle(f"PPO Обучение (шаг {step})", fontsize=10)
+    def _draw_figure(
+        episode_x: list[int],
+        r: list[float],
+        v: list[float],
+        pl: list[float],
+        vl: list[float],
+        ap: list[tuple[float, ...]] | None,
+        suptitle: str,
+    ) -> None:
+        m = len(r)
+        if ap is not None and len(ap) != m:
+            ap = None
+        n_rows = 6 if ap else 4
+        fig, axes = plt.subplots(n_rows, 1, figsize=(7, 2.2 * n_rows), sharex=True)
+        fig.suptitle(suptitle, fontsize=10)
 
-    ax_reward, ax_visit, ax_ploss, ax_vloss = axes[:4]
-    if n_rows == 6:
-        ax_act, ax_ent = axes[4], axes[5]
+        ax_reward, ax_visit, ax_ploss, ax_vloss = axes[:4]
+        if n_rows == 6:
+            ax_act, ax_ent = axes[4], axes[5]
 
-    ax_reward.plot(x, rewards, alpha=0.3, color="C0")
-    ax_reward.plot(x, smooth(rewards, window), color="C0", label="reward (среднее)")
-    ax_reward.set_ylabel("Reward")
-    ax_reward.legend(loc="upper right", fontsize=8)
-    ax_reward.grid(True, alpha=0.3)
+        ax_reward.plot(episode_x, r, alpha=0.3, color="C0")
+        ax_reward.plot(episode_x, smooth(r, window), color="C0", label="reward (среднее)")
+        ax_reward.set_ylabel("Reward")
+        ax_reward.legend(loc="upper right", fontsize=8)
+        ax_reward.grid(True, alpha=0.3)
 
-    ax_visit.plot(x, visited_pct, alpha=0.3, color="C1")
-    ax_visit.plot(x, smooth(visited_pct, window), color="C1", label="посещено % (среднее)")
-    ax_visit.set_ylabel("Посещено %")
-    ax_visit.legend(loc="upper right", fontsize=8)
-    ax_visit.grid(True, alpha=0.3)
+        ax_visit.plot(episode_x, v, alpha=0.3, color="C1")
+        ax_visit.plot(episode_x, smooth(v, window), color="C1", label="посещено % (среднее)")
+        ax_visit.set_ylabel("Посещено %")
+        ax_visit.legend(loc="upper right", fontsize=8)
+        ax_visit.grid(True, alpha=0.3)
 
-    ax_ploss.plot(x, losses, alpha=0.3, color="C2")
-    ax_ploss.plot(x, smooth(losses, window), color="C2", label="policy loss")
-    ax_ploss.set_ylabel("Policy Loss")
-    ax_ploss.legend(loc="upper right", fontsize=8)
-    ax_ploss.grid(True, alpha=0.3)
+        ax_ploss.plot(episode_x, pl, alpha=0.3, color="C2")
+        ax_ploss.plot(episode_x, smooth(pl, window), color="C2", label="policy loss")
+        ax_ploss.set_ylabel("Policy Loss")
+        ax_ploss.legend(loc="upper right", fontsize=8)
+        ax_ploss.grid(True, alpha=0.3)
 
-    if value_losses:
-        ax_vloss.plot(x, value_losses, alpha=0.3, color="C3")
-        ax_vloss.plot(x, smooth(value_losses, window), color="C3", label="value loss")
-    ax_vloss.set_ylabel("Value Loss")
-    ax_vloss.legend(loc="upper right", fontsize=8)
-    ax_vloss.grid(True, alpha=0.3)
+        if vl:
+            ax_vloss.plot(episode_x, vl, alpha=0.3, color="C3")
+            ax_vloss.plot(episode_x, smooth(vl, window), color="C3", label="value loss")
+        ax_vloss.set_ylabel("Value Loss")
+        ax_vloss.legend(loc="upper right", fontsize=8)
+        ax_vloss.grid(True, alpha=0.3)
 
-    if action_pct and len(action_pct) == n:
-        import math as _math
-        n_act = len(action_pct[0])
-        max_entropy = _math.log(n_act) if n_act > 1 else 1.0
+        if ap and m > 0:
+            import math as _math
+            n_act = len(ap[0])
+            max_entropy = _math.log(n_act) if n_act > 1 else 1.0
 
-        for i in range(n_act):
-            label = ACTION_LABELS[i] if i < len(ACTION_LABELS) else str(i)
-            ax_act.plot(x, [a[i] for a in action_pct], alpha=0.8, color=f"C{i}", label=label)
-        ax_act.set_ylabel("Доля (сэмпл.) %")
-        ax_act.legend(loc="upper right", fontsize=7, ncol=2)
-        ax_act.grid(True, alpha=0.3)
-        ax_act.set_ylim(-5, 105)
+            for i in range(n_act):
+                label = ACTION_LABELS[i] if i < len(ACTION_LABELS) else str(i)
+                ser = [a[i] for a in ap]
+                ax_act.plot(episode_x, ser, alpha=0.25, color=f"C{i}")
+                ax_act.plot(
+                    episode_x,
+                    smooth(ser, window),
+                    color=f"C{i}",
+                    alpha=0.9,
+                    label=label,
+                )
+            ax_act.set_ylabel("Доля (сэмпл.) %")
+            ax_act.legend(loc="upper right", fontsize=7, ncol=2)
+            ax_act.grid(True, alpha=0.3)
+            ax_act.set_ylim(-5, 105)
 
-        def _ep_entropy(counts: tuple[float, ...]) -> float:
-            h = 0.0
-            for p in counts:
-                frac = p / 100.0
-                if frac > 1e-9:
-                    h -= frac * _math.log(frac)
-            return h / max_entropy
+            def _ep_entropy(counts: tuple[float, ...]) -> float:
+                h = 0.0
+                for p in counts:
+                    frac = p / 100.0
+                    if frac > 1e-9:
+                        h -= frac * _math.log(frac)
+                return h / max_entropy
 
-        entropy_vals = [_ep_entropy(a) for a in action_pct]
-        ax_ent.plot(x, entropy_vals, alpha=0.3, color="C4")
-        ax_ent.plot(x, smooth(entropy_vals, window), color="C4", label="энтропия (норм.)")
-        ax_ent.axhline(1.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6, label="макс")
-        ax_ent.set_ylabel("Энтропия")
-        ax_ent.set_xlabel("Эпизод")
-        ax_ent.legend(loc="lower right", fontsize=7)
-        ax_ent.grid(True, alpha=0.3)
-        ax_ent.set_ylim(-0.05, 1.1)
-    else:
-        ax_vloss.set_xlabel("Эпизод")
+            entropy_vals = [_ep_entropy(a) for a in ap]
+            ax_ent.plot(episode_x, entropy_vals, alpha=0.3, color="C4")
+            ax_ent.plot(episode_x, smooth(entropy_vals, window), color="C4", label="энтропия (норм.)")
+            ax_ent.axhline(1.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6, label="макс")
+            ax_ent.set_ylabel("Энтропия")
+            ax_ent.set_xlabel("Эпизод")
+            ax_ent.legend(loc="lower right", fontsize=7)
+            ax_ent.grid(True, alpha=0.3)
+            ax_ent.set_ylim(-0.05, 1.1)
+        else:
+            ax_vloss.set_xlabel("Эпизод")
 
-    plt.tight_layout()
+        plt.tight_layout()
+
+    x_full = list(range(1, n + 1))
+    _draw_figure(
+        x_full,
+        rewards,
+        visited_pct,
+        losses,
+        value_losses,
+        action_pct,
+        f"PPO Обучение (шаг {step})",
+    )
     history_dir = plot_dir / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
     path = history_dir / f"step_{step:06d}.png"
@@ -294,7 +334,27 @@ def _save_training_plot(
     last_path = plot_dir / "last.png"
     plt.savefig(last_path, dpi=100, bbox_inches="tight")
     plt.close()
-    print(f"График сохранён: {path}  |  last: {last_path}")
+
+    extra = ""
+    if n > PLOT_DELTA_LAST_EPISODES:
+        k = PLOT_DELTA_LAST_EPISODES
+        start = n - k
+        x_tail = list(range(start + 1, n + 1))
+        _draw_figure(
+            x_tail,
+            rewards[start:],
+            visited_pct[start:],
+            losses[start:],
+            value_losses[start:],
+            action_pct[start:] if action_pct else None,
+            f"PPO Обучение (шаг {step}) — последние {k} эпизодов",
+        )
+        delta_path = plot_dir / "delta-last.png"
+        plt.savefig(delta_path, dpi=100, bbox_inches="tight")
+        plt.close()
+        extra = f"  |  delta-last: {delta_path}"
+
+    print(f"График сохранён: {path}  |  last: {last_path}{extra}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

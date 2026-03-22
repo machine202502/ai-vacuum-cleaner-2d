@@ -13,4 +13,14 @@ python training/train_torch.py apartment_1 --episodes 5000 --episode-time-sec 22
 
 python training/train_torch.py random --episodes 5000 --episode-time-sec 220 --gru --workers 8 --plot-every 8 --save-every 100 --curriculum
 
+py training/train_torch.py random --episodes 10000 --episode-time-sec 440 --gru --workers 8 --plot-every 8 --save-every 50 --curriculum
 
+
+
+lr=0.00008, t=310s
+Эпизод 5824/10000: reward=9895.5, посещено=12958/28136 (46.1%), p_loss=-0.0051, v_loss=0.0061, ent=0.0326, lr=0.00008, t=310s
+График сохранён: C:\shared-data\ai-vacuum-cleaner-2d\training\plots\history\step_005824.png  |  last: C:\shared-data\ai-vacuum-cleaner-2d\training\plots\last.png  |  delta-last: C:\shared-data\ai-vacuum-cleaner-2d\training\plots\delta-last.png
+--- Смена комнаты на: random_1 ---
+
+
+py training/train_torch.py random --episodes 5000 --episode-time-sec 440 --gru --workers 4 --plot-every 8 --save-every 100 --curriculum --hidden 234

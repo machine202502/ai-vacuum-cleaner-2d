@@ -2,6 +2,7 @@
 Управление пылесосом обученной моделью (policy_final.pt).
 То же, что game.py: комната, камера, карта посещений, ИК, encoder. Управление — по модели.
 Поддерживает MLP и GRU-политику — конфиг читается автоматически из чекпоинта.
+Чекбокс «Скрыть стены, зоны, робота (только ИК)» — остаются лучи дальномеров на тёмном фоне.
 """
 from __future__ import annotations
 
@@ -175,7 +176,7 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
     h_room = 24
     h_drop = 32
     h_chk  = 26
-    h_hint = 52
+    h_hint = 68
 
     btn_load = pygame_gui.elements.UIButton(
         relative_rect=pygame.Rect(x, y, bw, h_btn),
@@ -250,6 +251,14 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
     )
     y += h_chk + UI_GAP
 
+    chk_hide_room_robot = pygame_gui.elements.UICheckBox(
+        relative_rect=pygame.Rect(x, y, bw, h_chk),
+        text="Скрыть стены, зоны, робота (только ИК)",
+        manager=manager,
+        initial_state=False,
+    )
+    y += h_chk + UI_GAP
+
     label_visit_pct = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect(x, y, bw, h_line),
         text="Посещено: —",
@@ -266,7 +275,7 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
 
     label_hint = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect(x, y, bw, h_hint),
-        text="Управление: модель\nСКМ/колёсико — камера\nR — рестарт (новая позиция)",
+        text="Управление: модель\nСКМ/колёсико — камера\nR — рестарт (новая позиция)\n«Только ИК» — скрыть стены/зоны/робота",
         manager=manager,
     )
 
@@ -275,7 +284,8 @@ def _create_ui(manager: pygame_gui.UIManager, vw: int, vh: int) -> dict:
         "label_room":       label_room,
         "label_speed":      label_speed,
         "dropdown_speed":   dropdown_speed,
-        "chk_visit_map":    chk_visit_map,
+        "chk_visit_map":       chk_visit_map,
+        "chk_hide_room_robot": chk_hide_room_robot,
         "label_visit_pct":  label_visit_pct,
         "label_encoder":    label_encoder,
         "label_in_fwd":     label_in_fwd,
@@ -577,8 +587,10 @@ def main() -> None:
                 )
 
         world_surface.fill(BG)
-        room_render.draw_room(room, room_ctx)
-        agent_render.draw_agent(agent, agent_ctx)
+        hide_room_robot = ui["chk_hide_room_robot"].is_checked
+        if not hide_room_robot:
+            room_render.draw_room(room, room_ctx)
+            agent_render.draw_agent(agent, agent_ctx)
         sens = controller.get_sensors(agent)
         ox = WORLD_ORIGIN + agent.x
         oy = WORLD_ORIGIN + agent.y
