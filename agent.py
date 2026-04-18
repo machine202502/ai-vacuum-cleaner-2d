@@ -63,7 +63,7 @@ FPS = 60
 INITIAL_W = 1040
 INITIAL_H = 720
 
-PANEL_W = 300
+PANEL_W = 400
 PANEL_BG = (38, 38, 44)
 BG = (28, 28, 32)
 TEXT_CLR = (200, 200, 208)
@@ -73,7 +73,7 @@ BTN_MARGIN = 10
 BTN_H = 36
 UI_GAP = 8
 
-SPEED_OPTIONS = ["1x", "2x", "3x", "4x", "5x", "8x", "10x", "15x", "20x"]
+SPEED_OPTIONS = ["1x", "2x", "3x", "4x", "5x", "8x", "10x", "15x", "20x", "50x", "100x"]
 VISIT_PCT_UPDATE_MS = 1000
 
 # Нормализация obs — должна совпадать с vacuum_env.py
@@ -309,10 +309,20 @@ def _create_ui(
     *,
     zero_delta_ablate: bool = False,
 ) -> dict:
-    bw = PANEL_W - 2 * BTN_MARGIN
+    sidebar_scroll = pygame_gui.elements.UIScrollingContainer(
+        relative_rect=pygame.Rect(0, 0, PANEL_W, vh),
+        manager=manager,
+        allow_scroll_x=False,
+        allow_scroll_y=True,
+        anchors={"left": "left", "top": "top", "bottom": "bottom"},
+    )
+    ui_container = sidebar_scroll.get_container()
+
+    bw = PANEL_W - 2 * BTN_MARGIN - 20
     x, y = BTN_MARGIN, BTN_MARGIN
 
     h_btn  = 36
+    h_btn_small = 28
     h_line = 20
     h_room = 24
     h_drop = 32
@@ -325,6 +335,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_btn),
         text="Загрузить комнату",
         manager=manager,
+        container=ui_container,
     )
     y += h_btn + UI_GAP
 
@@ -332,6 +343,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_room),
         text="(комната)",
         manager=manager,
+        container=ui_container,
     )
     y += h_room + UI_GAP
 
@@ -339,6 +351,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_line),
         text="Скорость мира:",
         manager=manager,
+        container=ui_container,
     )
     y += h_line + UI_GAP
 
@@ -347,13 +360,32 @@ def _create_ui(
         starting_option="1x",
         relative_rect=pygame.Rect(x, y, bw, h_drop),
         manager=manager,
+        container=ui_container,
     )
     y += h_drop + UI_GAP
+
+    burst_gap = 6
+    burst_w = (bw - 2 * burst_gap) // 3
+    burst_texts = ("+100", "+200", "+500")
+    burst_vals = (100, 200, 500)
+    btn_step_burst: list[pygame_gui.elements.UIButton] = []
+    for i, txt in enumerate(burst_texts):
+        bx = x + i * (burst_w + burst_gap)
+        btn_step_burst.append(
+            pygame_gui.elements.UIButton(
+                relative_rect=pygame.Rect(bx, y, burst_w, h_btn_small),
+                text=txt,
+                manager=manager,
+                container=ui_container,
+            )
+        )
+    y += h_btn_small + UI_GAP
 
     label_ablate_title = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect(x, y, bw, h_line + 6),
         text="Обнулить канал (0 на вход сети):",
         manager=manager,
+        container=ui_container,
     )
     y += h_line + 6 + UI_GAP
 
@@ -372,6 +404,7 @@ def _create_ui(
             relative_rect=pygame.Rect(x, y, bw, h_toggle),
             text=lbl,
             manager=manager,
+            container=ui_container,
         )
         if zero_delta_ablate and idx == 5:
             b.select()
@@ -383,6 +416,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_line),
         text="Числа на вход (после обнулений):",
         manager=manager,
+        container=ui_container,
     )
     y += h_line + 2
 
@@ -390,6 +424,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_obs),
         text="val: --",
         manager=manager,
+        container=ui_container,
     )
     y += h_obs + UI_GAP
 
@@ -397,6 +432,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_line),
         text="Действие: зелёная стрелка = argmax",
         manager=manager,
+        container=ui_container,
     )
     y += h_line + 2
 
@@ -404,6 +440,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_pad),
         text=" ",
         manager=manager,
+        container=ui_container,
     )
     y += h_pad + UI_GAP
 
@@ -411,6 +448,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_toggle),
         text="Карта посещений",
         manager=manager,
+        container=ui_container,
     )
     btn_visit_map.select()
     y += h_toggle + UI_GAP
@@ -419,6 +457,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_toggle),
         text="Скрыть стены, зоны, робота (только ИК)",
         manager=manager,
+        container=ui_container,
     )
     y += h_toggle + UI_GAP
 
@@ -426,6 +465,7 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_line),
         text="Посещено: -",
         manager=manager,
+        container=ui_container,
     )
     y += h_line + UI_GAP
 
@@ -433,6 +473,15 @@ def _create_ui(
         relative_rect=pygame.Rect(x, y, bw, h_line),
         text="Encoder: 0.00 м",
         manager=manager,
+        container=ui_container,
+    )
+    y += h_line + UI_GAP
+
+    label_elapsed = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect(x, y, bw, h_line),
+        text="Время: 00:00",
+        manager=manager,
+        container=ui_container,
     )
     y += h_line + UI_GAP
 
@@ -445,13 +494,20 @@ def _create_ui(
             "Запуск: --zero-delta только delta=0"
         ),
         manager=manager,
+        container=ui_container,
     )
+    sidebar_content_h = y + h_hint + BTN_MARGIN
+    sidebar_scroll.set_scrollable_area_dimensions((PANEL_W, sidebar_content_h))
 
     return {
+        "sidebar_scroll":   sidebar_scroll,
+        "sidebar_content_h": sidebar_content_h,
         "btn_load":         btn_load,
         "label_room":       label_room,
         "label_speed":      label_speed,
         "dropdown_speed":   dropdown_speed,
+        "btn_step_burst":   btn_step_burst,
+        "step_burst_vals":  burst_vals,
         "btn_visit_map":       btn_visit_map,
         "btn_hide_room_robot": btn_hide_room_robot,
         "btn_ablate":          btn_ablate,
@@ -462,6 +518,7 @@ def _create_ui(
         "label_gamepad":       label_gamepad,
         "label_visit_pct":  label_visit_pct,
         "label_encoder":    label_encoder,
+        "label_elapsed":    label_elapsed,
         "label_hint":       label_hint,
     }
 
@@ -560,6 +617,9 @@ def main() -> None:
     _toggle_button_targets: frozenset = frozenset(
         (*ui["btn_ablate"], ui["btn_visit_map"], ui["btn_hide_room_robot"])
     )
+    _burst_steps_by_btn = {
+        btn: steps for btn, steps in zip(ui["btn_step_burst"], ui["step_burst_vals"])
+    }
 
     world_surface = pygame.Surface((WORLD_SIZE, WORLD_SIZE))
     room_ctx = room_render.RenderContext(surface=world_surface, origin_x=WORLD_ORIGIN, origin_y=WORLD_ORIGIN)
@@ -577,6 +637,7 @@ def main() -> None:
     camera.y = WORLD_ORIGIN - canvas_h // 2
 
     speed_multiplier = 1
+    pending_extra_steps = 0
     free_space_map = FreeSpaceMap()
     visit_map = VisitMap()
     _update_free_space_and_visit_map(room, agent, free_space_map, visit_map)
@@ -588,6 +649,7 @@ def main() -> None:
     last_visit_pct_ticks = 0
     encoder_total = 0.0
     encoder_delta = 0.0   # расстояние за последний шаг (0 = стоим)
+    elapsed_frames = 0
 
     # Скрытое состояние GRU: сохраняется между шагами, сбрасывается на рестарте
     hidden = policy.init_hidden() if policy.use_gru else None
@@ -636,6 +698,7 @@ def main() -> None:
                     agent.angle = random.uniform(0.0, 360.0)
                     encoder_total = 0.0
                     encoder_delta = 0.0
+                    elapsed_frames = 0
                     hidden = policy.init_hidden() if policy.use_gru else None
                     _update_free_space_and_visit_map(room, agent, free_space_map, visit_map)
                     visit_total_cells = visit_map.total_cells
@@ -666,6 +729,8 @@ def main() -> None:
 
             if event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element in _toggle_button_targets:
                 _toggle_selectable_button(event.ui_element)
+            elif event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element in _burst_steps_by_btn:
+                pending_extra_steps += _burst_steps_by_btn[event.ui_element]
             elif event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element == ui["btn_load"]:
                 try:
                     from tkinter import Tk, filedialog
@@ -689,6 +754,7 @@ def main() -> None:
                         visit_total_cells = visit_map.total_cells
                         encoder_total = 0.0
                         encoder_delta = 0.0
+                        elapsed_frames = 0
                         hidden = policy.init_hidden() if policy.use_gru else None
                 except Exception as e:
                     print(f"Ошибка загрузки: {e}")
@@ -708,7 +774,9 @@ def main() -> None:
                     camera.handle_event(canvas_event, viewport_size)
 
         # Управление от модели
-        for _ in range(speed_multiplier):
+        steps_to_run = speed_multiplier + pending_extra_steps
+        pending_extra_steps = 0
+        for _ in range(steps_to_run):
             obs = _get_obs()
             t = torch.tensor([obs], dtype=torch.float32)
             with torch.no_grad():
@@ -731,6 +799,7 @@ def main() -> None:
                 move_forward=fwd, move_backward=back,
                 turn_left=left,   turn_right=right,
             )
+            elapsed_frames += 1
             encoder_delta = result.encoder
             encoder_total += result.encoder
             if result.encoder > 0:
@@ -753,6 +822,10 @@ def main() -> None:
             end_y = oy + meters_to_pixels(dist_m) * math.sin(rad)
             pygame.draw.line(world_surface, (255, 255, 255), (ox, oy), (end_x, end_y), 1)
         ui["label_encoder"].set_text(f"Encoder: {encoder_total:.2f} м")
+        elapsed_sec = elapsed_frames / FPS
+        elapsed_min = int(elapsed_sec // 60)
+        elapsed_s = int(elapsed_sec % 60)
+        ui["label_elapsed"].set_text(f"Время: {elapsed_min:02d}:{elapsed_s:02d}")
 
         ticks_ms = pygame.time.get_ticks()
         if ticks_ms - last_visit_pct_ticks >= VISIT_PCT_UPDATE_MS:
@@ -779,12 +852,16 @@ def main() -> None:
 
         if vw != manager.get_root_container().rect.w or vh != manager.get_root_container().rect.h:
             manager.set_window_resolution((vw, vh))
+            ui["sidebar_scroll"].set_dimensions((PANEL_W, vh))
+            ui["sidebar_scroll"].set_scrollable_area_dimensions((PANEL_W, ui["sidebar_content_h"]))
         manager.update(time_delta)
         manager.draw_ui(screen)
         gp_rect = ui["label_gamepad"].get_abs_rect()
+        screen.set_clip(pygame.Rect(0, 0, PANEL_W, vh))
         _draw_action_pad_3x3(
             screen, gp_rect, last_action, policy.n_actions, last_action_name
         )
+        screen.set_clip(None)
 
         pygame.display.flip()
 

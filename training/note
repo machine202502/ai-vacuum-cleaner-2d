@@ -24,3 +24,12 @@ lr=0.00008, t=310s
 
 
 py training/train_torch.py random --episodes 5000 --episode-time-sec 440 --gru --workers 4 --plot-every 8 --save-every 100 --curriculum --hidden 234
+
+
+py training/train_torch.py random --episodes 10000 --episode-time-sec 440 --gru --workers 4 --plot-every 8 --save-every 100 --curriculum --hidden 234
+
+
+py training/train_torch.py random --episodes 20000 --episode-time-sec 440 --gru --workers 4 --plot-every 8 --save-every 100 --curriculum --hidden 234
+
+
+py training/train_torch.py random --episodes 20000 --episode-time-sec 440 --gru --workers 1 --plot-every 8 --save-every 50 --curriculum --hidden 234
